@@ -1,10 +1,11 @@
-"""Lakeguard — Governança e monitoramento de criação de assets no Databricks.
+"""Lakeguard — Governança de acessos no Databricks (modelo de personas).
 
 FastAPI: expõe a API e serve o SPA React (frontend/dist).
 """
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -12,39 +13,44 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from server import db
+from server.routes.admin import router as admin_router
 from server.routes.alerts import router as alerts_router
-from server.routes.assets import router as assets_router
-from server.routes.aidk import router as aidk_router
-from server.routes.capabilities import router as capabilities_router
-from server.routes.chat import router as chat_router
-from server.routes.detection import router as detection_router
-from server.routes.genie import router as genie_router
-from server.routes.grants import router as grants_router
+from server.routes.domains import router as domains_router
+from server.routes.explore import router as explore_router
 from server.routes.me import router as me_router
-from server.routes.users import router as users_router
-from server.routes.workspaces import router as workspaces_router
+from server.routes.migration import router as migration_router
+from server.routes.overview import router as overview_router
+from server.routes.personas import router as personas_router
+from server.routes.requests import router as requests_router
+
+log = logging.getLogger("lakeguard")
 
 app = FastAPI(
     title="Lakeguard",
-    description="Governança e monitoramento de criação de assets no Databricks",
-    version="0.1.0",
+    description="Governança de acessos no Databricks: visão 360, personas, solicitações e migração",
+    version="2.0.0",
 )
 
-app.include_router(me_router)
-app.include_router(users_router)
-app.include_router(capabilities_router)
-app.include_router(grants_router)
-app.include_router(alerts_router)
-app.include_router(assets_router)
-app.include_router(genie_router)
-app.include_router(detection_router)
-app.include_router(aidk_router)
-app.include_router(chat_router)
-app.include_router(workspaces_router)
+for r in (me_router, overview_router, explore_router, personas_router, domains_router, requests_router,
+          migration_router, alerts_router, admin_router):
+    app.include_router(r)
+
+
+@app.on_event("startup")
+def ensure_model() -> None:
+    """Primeiro start: carrega o modelo de personas do documento (se vazio)."""
+    try:
+        if not db.query_one("SELECT 1 AS ok FROM personas LIMIT 1"):
+            from server.seed import seed_model
+            with db.connection() as conn:
+                seed_model(conn)
+            log.info("modelo de personas carregado")
+    except Exception as ex:  # noqa: BLE001
+        log.warning("não foi possível verificar o modelo: %s", ex)
 
 
 @app.get("/api/health")
-async def health():
+def health():
     return {"status": "ok", "lakebase": db.healthcheck()}
 
 

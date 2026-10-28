@@ -7,6 +7,8 @@ compensa a complexidade). Sempre com search_path no schema do Lakeguard.
 
 from __future__ import annotations
 
+import threading
+import time
 from contextlib import contextmanager
 from typing import Any, Iterator
 
@@ -15,11 +17,25 @@ import psycopg2.extras
 
 from server.config import PG_SCHEMA, lakebase_params
 
+_params: dict | None = None
+_params_at = 0.0
+_params_lock = threading.Lock()
+_PARAMS_TTL = 40 * 60  # token OAuth do Lakebase vale ~1h
+
+
+def _cached_params() -> dict:
+    global _params, _params_at
+    with _params_lock:
+        if _params is None or time.time() - _params_at > _PARAMS_TTL:
+            _params = lakebase_params()
+            _params_at = time.time()
+        return _params
+
 
 @contextmanager
 def connection() -> Iterator[psycopg2.extensions.connection]:
     """Abre uma conexão, fixa o search_path e garante commit/rollback/close."""
-    params = lakebase_params()
+    params = _cached_params()
     conn = psycopg2.connect(connect_timeout=10, **params)
     try:
         with conn.cursor() as cur:

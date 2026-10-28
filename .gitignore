@@ -14,3 +14,6 @@ app/frontend/dist/
 
 # OS
 .DS_Store
+
+# demo
+setup/demo_manifest.json
