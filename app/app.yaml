@@ -1,0 +1,22 @@
+command:
+  - "python"
+  - "-m"
+  - "uvicorn"
+  - "app:app"
+  - "--host"
+  - "0.0.0.0"
+  - "--port"
+  - "8000"
+env:
+  # SQL warehouse (resource: sql-warehouse) — leitura do system.access.audit
+  - name: "WAREHOUSE_ID"
+    valueFrom: "sql-warehouse"
+  # Genie space para o agente text-to-SQL (preencher após criar o space)
+  - name: "GENIE_SPACE_ID"
+    value: ""
+  # Job de detecção (para disparo sob demanda pela UI)
+  - name: "DETECTION_JOB_ID"
+    value: "390951347241968"
+# NOTA: o Lakebase é ligado como resource do tipo "Database" na UI da app.
+# Ao vincular, o Databricks injeta automaticamente PGHOST/PGPORT/PGDATABASE/
+# PGUSER/PGPASSWORD — o código lê essas variáveis (server/config.py).

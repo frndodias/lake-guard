@@ -1,0 +1,32 @@
+bundle:
+  name: lakeguard-jobs
+
+targets:
+  fevm-fc:
+    default: true
+    workspace:
+      host: https://fevm-fc.cloud.databricks.com
+
+resources:
+  jobs:
+    lakeguard_detection:
+      name: "[Lakeguard] Motor de detecção de violações"
+      tasks:
+        - task_key: detect
+          spark_python_task:
+            python_file: ./detection/detect_violations.py
+          environment_key: default
+      environments:
+        - environment_key: default
+          spec:
+            client: "3"
+            dependencies:
+              - psycopg2-binary
+              - databricks-sdk>=0.96.0
+      schedule:
+        # a cada 10 minutos (audit log tem latência de minutos — near real-time)
+        quartz_cron_expression: "0 */10 * * * ?"
+        timezone_id: "America/Sao_Paulo"
+        pause_status: UNPAUSED
+      queue:
+        enabled: true

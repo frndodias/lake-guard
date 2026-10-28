@@ -1,0 +1,75 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Tokens de cor (canais RGB). :root = LIGHT, .dark = DARK. */
+:root {
+  --bg: 247 248 249;
+  --bg-soft: 238 241 242;
+  --surface: 255 255 255;
+  --surface-2: 241 244 245;
+  --border: 219 226 228;
+  --text: 27 49 57;
+  --text-dim: 91 107 112;
+  --navy: 27 49 57;
+  --navy-900: 255 255 255;
+  --navy-800: 238 241 242;
+  --navy-700: 226 232 234;
+  --navy-600: 224 231 233;
+  --oat: 27 49 57;
+  --oat-dim: 91 107 112;
+}
+.dark {
+  --bg: 14 26 31;
+  --bg-soft: 18 36 43;
+  --surface: 22 41 47;
+  --surface-2: 29 52 59;
+  --border: 42 69 78;
+  --text: 234 242 241;
+  --text-dim: 143 166 169;
+  --navy: 27 49 57;
+  --navy-900: 14 26 31;
+  --navy-800: 18 36 43;
+  --navy-700: 27 49 57;
+  --navy-600: 36 67 77;
+  --oat: 238 237 233;
+  --oat-dim: 197 198 201;
+}
+
+@layer base {
+  body {
+    @apply antialiased;
+  }
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: rgb(var(--border)) transparent;
+  }
+  *::-webkit-scrollbar { width: 10px; height: 10px; }
+  *::-webkit-scrollbar-track { background: transparent; }
+  *::-webkit-scrollbar-thumb {
+    background-color: rgb(var(--border));
+    border-radius: 8px;
+    border: 2px solid transparent;
+    background-clip: content-box;
+  }
+  *::-webkit-scrollbar-thumb:hover { background-color: rgb(var(--text-dim)); }
+}
+
+@layer components {
+  .card {
+    @apply bg-surface border border-border rounded-xl2 shadow-card;
+  }
+  .btn {
+    @apply inline-flex items-center gap-2 px-3.5 py-2 rounded-lg text-sm font-medium
+           transition-colors disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+  .btn-primary { @apply btn bg-lava text-white hover:bg-lava/90; }
+  .btn-ghost   { @apply btn border border-border text-text hover:bg-surface-2; }
+  .badge {
+    @apply inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium;
+  }
+  .input {
+    @apply bg-navy-800 border border-border rounded-lg px-3 py-2 text-sm text-text
+           placeholder:text-text-dim focus:outline-none focus:ring-2 focus:ring-lava-ring;
+  }
+}
