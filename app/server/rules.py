@@ -50,7 +50,7 @@ def evaluate() -> int:
                     humans = []
                 if humans:
                     add({"rule": "human_write_prod", "severity": "critical",
-                         "title": f"{len(humans)} pessoa(s) podem escrever em produção via {s.label(pid)}",
+                         "title": f"{len(humans)} pessoa(s) podem escrever em produção ({sec}) via {s.label(pid)}",
                          "principal": pid, "object": sec,
                          "detail": {"privilege": priv, "via": pname, "people": [s.label(h) for h in humans][:50]}})
     for key, items in outside.items():

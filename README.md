@@ -1,79 +1,62 @@
 # 🛡️ Lakeguard
 
-Governança e monitoramento de **criação de assets** no Databricks. Controla, de
-forma customizada, o que cada usuário/grupo pode criar (dashboards, Genie spaces,
-jobs, warehouses, etc.) — algo que os entitlements nativos não fazem de forma
-granular.
+Governança de acessos no Databricks baseada em **modelo de personas**: visão 360 de
+quem pode × quem usa, personas como dado (desejado × atual), pedidos de acesso com
+prazo e aprovação, migração dos grupos legados em ondas e regras contínuas.
 
-## Como funciona — defesa em 2 camadas
+> O Unity Catalog **aplica** as regras · o Lakeguard **organiza e dá visibilidade** ·
+> as pessoas **decidem**.
 
-| Camada | Mecanismo | O que cobre |
-|--------|-----------|-------------|
-| **Preventiva** | A app é um *gateway*: cria o asset via **on-behalf-of** só se o principal tiver permissão na tabela de roles. | Tudo que passa pelo caminho oficial. |
-| **Detectiva** | Job lê `system.access.audit`, cruza com as permissões e gera **alertas** sobre quem criou algo direto na UI sem permissão. | Quem burla o gateway. |
+## Módulos
 
-> A camada detectiva tem latência de minutos (audit log) — é **near real-time**.
+| Tela | O que faz |
+|------|-----------|
+| **Diagnóstico** | Indicadores (usuários com exatamente 1 persona, % de GRANTs fora do modelo…), matriz principal × catalog e principais anomalias |
+| **Visão 360** | Por identidade, grupo ou dado: grupos (inclusive aninhados), acesso efetivo com o caminho (“por quê”), pode × usa, o que criou, rede de acessos |
+| **Personas** | As 9 personas do documento como dado: permissões por catalog/schema, membros (IdP aninhado + manuais com prazo), prévia de impacto, aprovação, aplicação, versões e rollback |
+| **Domínios e clearance** | Schemas de domínio, sensibilidade (normal / restrito / crítico), grupos `clearance-*` e stewards aprovadores |
+| **Solicitações** | Pedir acesso com prazo → steward aprova (+ DPO se crítico) → SP aplica → expira sozinho |
+| **Migração** | De-para dos grupos legados (→ persona, → clearance, apagar, → SP, reduzir o clone) e ondas com prévia de impacto e rollback |
+| **Regras e alertas** | GRANT fora do modelo, GRANT direto a usuário, escrita humana em produção, dado sensível sem clearance, admin se auto-atribuindo, persona fora do modelo… |
+| **Administração** | Papéis do app (admin, steward por domínio, DPO, auditor), catalogs lógicos → físicos, configurações, inventário e trilha de auditoria |
 
-## Escopo: account inteira
+## Arquitetura
 
-A detecção cobre **todos os workspaces da account** (`system.access.audit` é
-account-wide); a UI filtra por workspace. Permissões podem valer para a account
-inteira (`workspace_id = '*'`) ou para um workspace específico — o escopo do
-workspace tem prioridade sobre o `'*'`.
+```
+Usuários (SSO) ──► App Lakeguard (FastAPI + React, Databricks App)
+                     │  controle de acesso do app (app_roles)
+                     ├─ motor de acesso em memória (grupos aninhados, herança, ownership, simulação)
+                     ├─ Lakebase (schema lg): modelo, pedidos, alertas, log + espelho do inventário
+                     └─ camada de aplicação: SP do app → GRANT/REVOKE (UC) e membros (SCIM de conta)
+Job de inventário (serverless, de hora em hora)
+   SCIM de conta + Grants API + system tables (lineage, audit)
+   → Lakebase (lg.inv_*) + Delta (fc_catalog.lakeguard.inv_*) → regras → expirações
+```
 
-Limitações (a app roda e tem credencial só no workspace onde está deployada):
-- **Usuários**: SCIM do workspace da app + principais vistos no audit (listar a
-  account toda exigiria account admin).
-- **Grupos**: só são resolvidos os visíveis no workspace da app.
-- **Remediar** e **Criar asset**: só no workspace da app; nos demais o alerta
-  aponta o workspace para tratamento manual.
-- **Nomes de workspace**: vêm de `system.access.workspaces_latest` (se não
-  estiver habilitada, a UI mostra o id).
+Princípios: **quem decide não executa** (pessoas aprovam, o SP aplica); quem pede não
+aprova; acesso temporário entra como **membro de grupo** (`clearance-*`), nunca como GRANT
+direto ao usuário; personas recebem GRANT só em domínios **normais e cadastrados**
+(domínios restritos/críticos vão para o clearance).
 
 ## Estrutura
 
 ```
 lakeguard/
-├── app/                  # Databricks App — FastAPI + React (Vite/TS/Tailwind)
-│   ├── app.py            # API + serve SPA
-│   ├── app.yaml          # config de runtime (warehouse, lakebase, genie)
-│   ├── server/           # config, auth (OBO), db (Lakebase), services, routes/
-│   └── frontend/         # UI React (tema Databricks + menu lateral)
-├── jobs/                 # DABs bundle do motor de detecção
-│   └── detection/detect_violations.py
-├── sql/
-│   ├── uc_lakeguard.sql       # schema + view sobre system.access.audit (Delta)
-│   └── lakebase_schema.sql    # tabelas operacionais (Postgres)
-└── setup/provision.md    # passo a passo de provisionamento
+├── databricks.yml          # bundle do job de inventário (raiz)
+├── app/                    # Databricks App
+│   ├── app.py, app.yaml
+│   ├── server/             # engine, inventory, rules, workflow, executor, migration, rbac, routes/
+│   └── frontend/           # React + Vite + Tailwind
+├── jobs/inventory/run.py   # job (usa app/server)
+├── sql/lakebase_schema.sql # schema lg (Postgres)
+└── setup/                  # provision.md, demo_seed.py, demo_cleanup.py
 ```
 
-## Arquitetura de dados
+## Ambiente de demo (fevm-fc)
 
-- **Delta / system tables** (`fc_catalog.lakeguard.v_creation_events`): eventos de
-  criação lidos direto de `system.access.audit`. Fonte do dashboard e do Genie.
-- **Lakebase (Postgres, `lakeguard`)**: estado operacional — capacidades, grants,
-  alertas e checkpoint da detecção. Baixa latência para a UI.
+`setup/demo_seed.py` simula o cenário da Nuvemshop: catalogs `lg_*`, grupos de conta
+`dbdemo-*` (personas, espelhos do IdP, clearance, legados, clone, agentes), 20 usuários
+fictícios `dbdemo.*@nuvemshop.example`, 6 SPs `dbdemo-sp-*`, GRANTs bagunçados e uso
+simulado. Remoção: `setup/demo_cleanup.py --yes`.
 
-## Setup
-
-Ver [setup/provision.md](setup/provision.md). Resumo:
-
-```bash
-# 1. UC (schema + view)      -> sql/uc_lakeguard.sql
-# 2. Lakebase (instância + schema) -> sql/lakebase_schema.sql
-# 3. Genie space (opcional)  -> anotar GENIE_SPACE_ID
-# 4. App                     -> build frontend + databricks apps deploy
-# 5. Job de detecção         -> cd jobs && databricks bundle deploy -t fevm-fc
-```
-
-## Dev local
-
-```bash
-export DATABRICKS_PROFILE=fevm-fc
-cd app/frontend && npm install && npm run build && cd ..
-pip install -r requirements.txt
-uvicorn app:app --reload --port 8000
-# frontend em watch: cd frontend && npm run dev  (proxy /api -> :8000)
-```
-
-Workspace: `fevm-fc` · Catálogo: `fc_catalog` · Schema: `lakeguard`
+Ver [setup/provision.md](setup/provision.md) para o provisionamento completo.

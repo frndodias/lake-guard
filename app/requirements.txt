@@ -3,7 +3,3 @@ uvicorn[standard]>=0.30.0
 databricks-sdk>=0.81.0
 pydantic>=2.0.0
 psycopg2-binary>=2.9.0
-openai>=1.40.0
-fastmcp>=3.2.4,<4
-# ai-dev-kit (databricks-tools-core) — instalado do repo (não está no PyPI)
-databricks-tools-core @ git+https://github.com/databricks-solutions/ai-dev-kit.git@main#subdirectory=databricks-tools-core

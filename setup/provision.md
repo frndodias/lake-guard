@@ -1,93 +1,69 @@
 # Lakeguard — Provisionamento
 
 Profile: **`fevm-fc`** · Workspace: `https://fevm-fc.cloud.databricks.com`
-Catálogo: **`fc_catalog`** · Schema UC: **`lakeguard`** · Lakebase: **`lakeguard`**
+Lakebase: instância **`lakeguard`**, database `lakeguard`, schema **`lg`** · UC: `fc_catalog.lakeguard`
 
-Ordem de execução. Rode a partir da raiz `lakeguard/`.
+Rode a partir da raiz `lakeguard/`.
 
-## 1. Unity Catalog (schema + view sobre o audit)
-
-```bash
-databricks experimental aitools tools query "$(cat sql/uc_lakeguard.sql)" --profile fevm-fc
-```
-> Alternativa: cole o conteúdo no SQL editor do workspace e execute.
-
-Valide:
-```bash
-databricks experimental aitools tools query \
-  "SELECT capability, COUNT(*) n FROM fc_catalog.lakeguard.v_creation_events \
-   WHERE event_date >= current_date() - INTERVAL 7 DAYS GROUP BY capability ORDER BY n DESC" \
-  --profile fevm-fc
-```
-
-## 2. Lakebase (instância Postgres `lakeguard`)
+## 1. Lakebase (schema lg)
 
 ```bash
-# cria a instância (capacidade mínima; ajuste conforme necessário)
-databricks database create-database-instance --json '{
-  "name": "lakeguard",
-  "capacity": "CU_1"
-}' --profile fevm-fc
-
-# aguarde ficar AVAILABLE
-databricks database get-database-instance lakeguard --profile fevm-fc -o json | grep state
+HOST=$(databricks database get-database-instance lakeguard -p fevm-fc -o json | jq -r .read_write_dns)
+TOKEN=$(databricks database generate-database-credential --json '{"instance_names":["lakeguard"]}' -p fevm-fc -o json | jq -r .token)
+USER=$(databricks current-user me -p fevm-fc -o json | jq -r .userName)
+PGPASSWORD="$TOKEN" psql "host=$HOST port=5432 dbname=lakeguard user=$USER sslmode=require" -f sql/lakebase_schema.sql
 ```
 
-Crie o banco `lakeguard` e aplique o schema. Gere a credencial e conecte via `psql`:
+Depois, dê ao role do SP do app (client_id) acesso ao schema — ver o bloco comentado no fim de
+`sql/lakebase_schema.sql`. Re-vincular o resource de database recria o role: reaplique os GRANTs.
+
+## 2. Permissões do SP do app
+
+| Onde | O quê | Por quê |
+|------|-------|---------|
+| Catalogs do modelo | `USE CATALOG`, `USE SCHEMA`, `BROWSE`, `MANAGE` | listar objetos e aplicar GRANT/REVOKE |
+| Grupos do modelo (conta) | papel `group.manager` | adicionar/remover membros (pedidos, migração) |
+| Job de inventário | `CAN_MANAGE_RUN` | botão "Rodar agora" |
+| Lakebase `lg` | USAGE + DML | estado do app |
+
+Sem account admin, o SP só gerencia grupos onde for group manager. Ler o SCIM de conta (via
+`/api/2.0/account/scim/v2` no host do workspace) funciona para qualquer usuário.
+
+## 3. Ambiente de demo (opcional)
 
 ```bash
-HOST=$(databricks database get-database-instance lakeguard --profile fevm-fc -o json | python3 -c "import sys,json;print(json.load(sys.stdin)['read_write_dns'])")
-TOKEN=$(databricks database generate-database-credential --json '{"instance_names":["lakeguard"]}' --profile fevm-fc -o json | python3 -c "import sys,json;print(json.load(sys.stdin)['token'])")
-USER=$(databricks current-user me --profile fevm-fc -o json | python3 -c "import sys,json;print(json.load(sys.stdin)['userName'])")
-
-# cria o database (uma vez), conectando ao 'databricks_postgres' default
-PGPASSWORD="$TOKEN" psql "host=$HOST port=5432 dbname=databricks_postgres user=$USER sslmode=require" \
-  -c "CREATE DATABASE lakeguard;"
-
-# aplica o schema operacional
-PGPASSWORD="$TOKEN" psql "host=$HOST port=5432 dbname=lakeguard user=$USER sslmode=require" \
-  -f sql/lakebase_schema.sql
+~/dev/lg-venv/bin/python setup/demo_seed.py        # cria lg_*, dbdemo-*, GRANTs e o modelo
+~/dev/lg-venv/bin/python setup/demo_cleanup.py --yes   # remove tudo
 ```
 
-## 3. Genie space (agente text-to-SQL) — opcional
+Para um cliente real: ajuste em **Administração** os catalogs lógicos → físicos, o prefixo de
+grupos (vazio), o filtro de escopo SCIM e a chave da tag de sensibilidade; desligue `demo_mode`
+e `allow_self_approval`.
 
-Crie um Genie space apontando para `fc_catalog.lakeguard.v_creation_events`
-(e, se quiser, tabelas do Lakebase via synced tables). Anote o `space_id` e
-coloque em `app/app.yaml` (`GENIE_SPACE_ID`).
-
-## 4. App (build do frontend + deploy)
+## 4. Job de inventário (DABs, raiz do repo)
 
 ```bash
-# build do frontend
-cd app/frontend && npm install && npm run build && cd ../..
-
-# cria e faz deploy da app
-databricks apps create lakeguard --profile fevm-fc
-databricks sync ./app "/Workspace/Users/fernando.custodio@databricks.com/lakeguard/app" --profile fevm-fc
-databricks apps deploy lakeguard \
-  --source-code-path "/Workspace/Users/fernando.custodio@databricks.com/lakeguard/app" \
-  --profile fevm-fc
+databricks bundle deploy -p fevm-fc
+databricks bundle run lakeguard_inventory -p fevm-fc
 ```
 
-Na UI da app (Settings → Resources), vincule:
-- **SQL warehouse** com o nome de resource `sql-warehouse` (o `app.yaml` referencia).
-- **Database (Lakebase)** `lakeguard` — injeta `PGHOST/PGPORT/PGDATABASE/PGUSER/PGPASSWORD`.
+Atualize `INVENTORY_JOB_ID` em `app/app.yaml` com o id do job.
 
-Habilite **User authorization** (OBO) com os escopos `sql`, `dashboards.genie`
-para o gateway de criação funcionar com a identidade do usuário.
-
-Dê ao **service principal da app** permissão de leitura em `system.access.audit`
-e no schema `fc_catalog.lakeguard`, e workspace-admin (ou entitlement SCIM) para
-listar usuários/grupos.
-
-## 5. Job de detecção (DABs)
+## 5. App
 
 ```bash
-cd jobs
-databricks bundle validate -t fevm-fc --profile fevm-fc
-databricks bundle deploy  -t fevm-fc --profile fevm-fc
-databricks bundle run lakeguard_detection -t fevm-fc --profile fevm-fc   # execução manual
+cd app/frontend && npm install && npm run build && cd ..
+databricks sync . /Workspace/Users/fernando.custodio@databricks.com/lakeguard/app \
+  --include "frontend/dist/**" --exclude "frontend/node_modules/**" --exclude "frontend/src/**" -p fevm-fc
+databricks apps deploy lakeguard --source-code-path /Workspace/Users/fernando.custodio@databricks.com/lakeguard/app -p fevm-fc
 ```
 
-O job roda a cada 10 min e popula a tabela `alerts` no Lakebase.
+Resources do app: `sql-warehouse` (não usar warehouse REALTIME) e `lakebase` (Database Instance).
+
+## Dev local
+
+```bash
+cd app && LAKEGUARD_PG_SCHEMA=lg WAREHOUSE_ID=<id> ~/dev/lg-venv/bin/uvicorn app:app --port 8001
 ```
+
+Sem os headers do Databricks Apps, o usuário local é `LAKEGUARD_LOCAL_EMAIL`.

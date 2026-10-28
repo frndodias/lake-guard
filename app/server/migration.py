@@ -11,6 +11,8 @@ Ondas geram um plano (membros → destino, depois saem do legado) com rollback.
 
 from __future__ import annotations
 
+import psycopg2.extras
+
 from server import db
 from server.engine import ALL, Snapshot
 
@@ -92,14 +94,17 @@ def suggest(s: Snapshot) -> list[dict]:
 def sync_mappings(s: Snapshot, actor: str = "sistema") -> list[dict]:
     """Grava sugestões novas sem sobrescrever o que o admin já editou."""
     sugg = suggest(s)
-    for x in sugg:
-        db.execute("""INSERT INTO migration_mappings (legacy_group, action, target, suggested, rationale, updated_by)
-                      VALUES (%s,%s,%s,TRUE,%s,%s)
-                      ON CONFLICT (legacy_group) DO UPDATE SET action = EXCLUDED.action, target = EXCLUDED.target,
-                        rationale = EXCLUDED.rationale, updated_at = now()
-                      WHERE migration_mappings.suggested AND migration_mappings.status = 'planned'""",
-                   (x["group"], x["action"], x["target"], x["rationale"], actor))
-    rows = {r["legacy_group"]: r for r in db.query("SELECT * FROM migration_mappings")}
+    with db.connection() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            for x in sugg:
+                cur.execute("""INSERT INTO migration_mappings (legacy_group, action, target, suggested, rationale, updated_by)
+                               VALUES (%s,%s,%s,TRUE,%s,%s)
+                               ON CONFLICT (legacy_group) DO UPDATE SET action = EXCLUDED.action,
+                                 target = EXCLUDED.target, rationale = EXCLUDED.rationale, updated_at = now()
+                               WHERE migration_mappings.suggested AND migration_mappings.status = 'planned'""",
+                            (x["group"], x["action"], x["target"], x["rationale"], actor))
+            cur.execute("SELECT * FROM migration_mappings")
+            rows = {r["legacy_group"]: dict(r) for r in cur.fetchall()}
     for x in sugg:
         m = rows.get(x["group"]) or {}
         x["mapping"] = m

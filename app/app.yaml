@@ -8,15 +8,18 @@ command:
   - "--port"
   - "8000"
 env:
-  # SQL warehouse (resource: sql-warehouse) — leitura do system.access.audit
+  # SQL warehouse (resource: sql-warehouse) — leituras pontuais de system tables
   - name: "WAREHOUSE_ID"
     valueFrom: "sql-warehouse"
-  # Genie space para o agente text-to-SQL (preencher após criar o space)
-  - name: "GENIE_SPACE_ID"
-    value: ""
-  # Job de detecção (para disparo sob demanda pela UI)
-  - name: "DETECTION_JOB_ID"
-    value: "390951347241968"
-# NOTA: o Lakebase é ligado como resource do tipo "Database" na UI da app.
-# Ao vincular, o Databricks injeta automaticamente PGHOST/PGPORT/PGDATABASE/
-# PGUSER/PGPASSWORD — o código lê essas variáveis (server/config.py).
+  # schema v2 no Lakebase (o resource "lakebase" injeta PGHOST/PGUSER/PGDATABASE)
+  - name: "LAKEGUARD_PG_SCHEMA"
+    value: "lg"
+  # job de inventário 360 e regras (bundle na raiz do repo)
+  - name: "INVENTORY_JOB_ID"
+    value: "421974903123513"
+  # conta (rule sets de group manager)
+  - name: "LAKEGUARD_ACCOUNT_ID"
+    value: "05d08df7-ae03-43ad-bbae-14babb530ec0"
+  # admins garantidos do próprio app (além da tabela app_roles)
+  - name: "LAKEGUARD_BOOTSTRAP_ADMINS"
+    value: "fernando.custodio@databricks.com"
