@@ -78,8 +78,9 @@ export type AssetDetail = {
 };
 
 export type GraphNode = { id: string; kind: string; label: string; class?: string | null; ring: number; full_name?: string;
-  sec_type?: string; sensitivity?: string | null };
-export type GraphData = { nodes: GraphNode[]; edges: { from: string; to: string; kind: string; privileges?: string[] }[] };
+  sec_type?: string; sensitivity?: string | null; expandable?: boolean; count?: number };
+export type GraphData = { nodes: GraphNode[]; edges: { from: string; to: string; kind: string; privileges?: string[] }[];
+  truncated?: number };
 
 export type PersonaGrant = { catalog: string; schema_scope: string | null; privileges: string[] };
 

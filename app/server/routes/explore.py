@@ -229,6 +229,47 @@ def asset_detail(name: str = Query(...), user: UserCtx = Depends(require_view)):
     return out
 
 
+def _parents(s: Snapshot, pid: str) -> list[str]:
+    return [g for g, ms in s.members.items() if pid in ms and g in s.principals]
+
+
+def _direct_grants(s: Snapshot, pid: str) -> dict[str, list[str]]:
+    out: dict[str, list[str]] = defaultdict(list)
+    for sec, rows in s.grants.items():
+        for _, ppid, priv in rows:
+            if ppid == pid:
+                out[sec].append(priv)
+    return out
+
+
+def _grantees(s: Snapshot, sec: str) -> dict[str, list[str]]:
+    out: dict[str, list[str]] = defaultdict(list)
+    for pname, ppid, priv in s.grants.get(sec, []):
+        if ppid and ppid in s.principals:
+            out[ppid].append(priv)
+    return out
+
+
+def _gnode(s: Snapshot, pid: str, ring: int) -> dict:
+    p = s.principals[pid]
+    if p["type"] == "group":
+        count = len(s.members.get(pid, ()))
+        expandable = count > 0 or bool(_direct_grants(s, pid))
+    else:
+        count = len(_parents(s, pid))
+        expandable = count > 0
+    return {"id": pid, "kind": p["type"], "label": s.label(pid), "class": _klass(s, pid), "ring": ring,
+            "expandable": expandable, "count": count}
+
+
+def _snode(s: Snapshot, sec: str, ring: int) -> dict:
+    meta = s.securables.get(sec) or {}
+    return {"id": f"sec:{sec}", "kind": "securable", "label": sec.split(".")[-1], "full_name": sec,
+            "sec_type": meta.get("type", "catalog"), "sensitivity": s.sensitivity(sec), "ring": ring,
+            "expandable": bool(s.children.get(sec)) or bool(s.grants.get(sec)),
+            "count": len(s.children.get(sec, []))}
+
+
 @router.get("/graph")
 def graph(id: str, user: UserCtx = Depends(require_view)):
     """Rede de acessos ao redor de um nó (ego network)."""
@@ -240,8 +281,7 @@ def graph(id: str, user: UserCtx = Depends(require_view)):
 
     def add_p(pid: str, ring: int):
         if pid not in nodes:
-            nodes[pid] = {"id": pid, "kind": s.principals[pid]["type"], "label": s.label(pid),
-                          "class": _klass(s, pid), "ring": ring}
+            nodes[pid] = _gnode(s, pid, ring)
 
     add_p(id, 0)
     center = s.principals[id]
@@ -263,12 +303,60 @@ def graph(id: str, user: UserCtx = Depends(require_view)):
             if ppid in ids:
                 key = f"sec:{sec}"
                 if key not in nodes:
-                    nodes[key] = {"id": key, "kind": "securable", "label": sec.split(".")[-1], "full_name": sec,
-                                  "sec_type": (s.securables.get(sec) or {}).get("type", "catalog"),
-                                  "sensitivity": s.sensitivity(sec), "ring": max_ring + 1}
+                    nodes[key] = _snode(s, sec, max_ring + 1)
                 e = next((e for e in edges if e["from"] == ppid and e["to"] == key), None)
                 if e:
                     e["privileges"].append(priv)
                 else:
                     edges.append({"from": ppid, "to": key, "kind": "grant", "privileges": [priv]})
     return {"nodes": list(nodes.values()), "edges": edges}
+
+
+@router.get("/graph/expand")
+def graph_expand(id: str, limit: int = 40, user: UserCtx = Depends(require_view)):
+    """Vizinhos de um nó para o drill-down na rede.
+
+    grupo → membros diretos (usuários, SPs, subgrupos) + GRANTs diretos
+    usuário/SP → grupos diretos + GRANTs diretos
+    objeto → filhos (schemas/tabelas) + quem tem GRANT direto nele
+    """
+    s = engine.snapshot()
+    nodes: list[dict] = []
+    edges: list[dict] = []
+    total = 0
+    if id.startswith("sec:"):
+        sec = id[4:]
+        if sec not in s.securables:
+            raise HTTPException(404, "objeto não encontrado")
+        children = sorted(s.children.get(sec, []))
+        total += len(children)
+        for c in children[:limit]:
+            nodes.append(_snode(s, c, 0))
+            edges.append({"from": id, "to": f"sec:{c}", "kind": "contains"})
+        grantees = _grantees(s, sec)
+        total += len(grantees)
+        for pid, privs in list(grantees.items())[:limit]:
+            nodes.append(_gnode(s, pid, 0))
+            edges.append({"from": pid, "to": id, "kind": "grant", "privileges": privs})
+    else:
+        p = s.principals.get(id)
+        if not p:
+            raise HTTPException(404, "nó não encontrado")
+        if p["type"] == "group":
+            members = sorted(s.members.get(id, ()), key=s.label)
+            members = [m for m in members if m in s.principals]
+            total += len(members)
+            for m in members[:limit]:
+                nodes.append(_gnode(s, m, 0))
+                edges.append({"from": m, "to": id, "kind": "member"})
+        else:
+            parents = _parents(s, id)
+            total += len(parents)
+            for g in parents[:limit]:
+                nodes.append(_gnode(s, g, 0))
+                edges.append({"from": id, "to": g, "kind": "member"})
+        for sec, privs in _direct_grants(s, id).items():
+            total += 1
+            nodes.append(_snode(s, sec, 0))
+            edges.append({"from": id, "to": f"sec:{sec}", "kind": "grant", "privileges": privs})
+    return {"nodes": nodes, "edges": edges, "truncated": max(0, total - len(nodes))}

@@ -38,6 +38,7 @@ export const api = {
   assets: () => req<AssetNode[]>("/api/assets"),
   asset: (name: string) => req<AssetDetail>(`/api/assets/detail${qs({ name })}`),
   graph: (id: string) => req<GraphData>(`/api/graph${qs({ id })}`),
+  graphExpand: (id: string) => req<GraphData>(`/api/graph/expand${qs({ id })}`),
 
   personas: () => req<PersonaRow[]>("/api/personas"),
   personaMeta: () => req<PersonaMeta>("/api/personas/meta"),
