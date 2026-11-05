@@ -61,7 +61,6 @@ export default function App() {
   ];
   const visible = nav.filter((n) => !n.needsView || me.can_view);
   const current = visible.find((n) => n.id === route.view) || visible[0];
-  const demo = Boolean(me.flags.demo_mode);
 
   let body: ReactNode;
   switch (current.id) {
@@ -130,14 +129,13 @@ export default function App() {
               <p className="text-xs text-text-dim">{current.subtitle}</p>
             </div>
             <div className="flex items-center gap-2">
-              {demo && <span className="badge bg-status-warn/15 text-status-warn" title="Ambiente de demonstração: identidades dbdemo-*, catalogs lg_* e uso simulado">modo demo</span>}
               <button onClick={toggle} className="btn-ghost !p-2" aria-label="Alternar tema"
                 title={theme === "dark" ? "Tema claro" : "Tema escuro"}>
                 {theme === "dark" ? <Icon.Sun className="w-5 h-5" /> : <Icon.Moon className="w-5 h-5" />}
               </button>
             </div>
           </header>
-          <div className="p-8 max-w-[1500px]">{body}</div>
+          <div className="p-8 w-full">{body}</div>
         </main>
       </div>
       {toast && <Toast msg={toast.msg} kind={toast.kind} onClose={() => setToast(null)} />}

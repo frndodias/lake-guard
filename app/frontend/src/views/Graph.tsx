@@ -33,6 +33,16 @@ function nodeEl(n: GraphNode, maxRing: number, position?: { x: number; y: number
 
 const edgeId = (from: string, to: string, kind: string) => `${from}|${to}|${kind}`;
 
+/** Zoom máximo ao enquadrar: com poucos nós o fit aproximaria demais (rótulos gigantes). */
+const FIT_MAX_ZOOM = 1.4;
+
+function capZoom(cy: Core) {
+  if (cy.zoom() > FIT_MAX_ZOOM) {
+    cy.zoom(FIT_MAX_ZOOM);
+    cy.center();
+  }
+}
+
 type Layout = "rings" | "force";
 
 function layoutOptions(kind: Layout): LayoutOptions {
@@ -116,7 +126,7 @@ export function GraphView({ data, height = 560 }: { data: GraphData; height?: nu
         const lay = cy.layout({ ...layoutOptions("force"), fit: false } as LayoutOptions);
         lay.one("layoutstop", () => {
           const nb = parent.closedNeighborhood().nodes();
-          cy.animate({ fit: { eles: nb, padding: 70 }, duration: 350 });
+          cy.animate({ fit: { eles: nb, padding: 70 }, duration: 350, complete: () => capZoom(cy) });
         });
         lay.run();
       }
@@ -179,8 +189,9 @@ export function GraphView({ data, height = 560 }: { data: GraphData; height?: nu
         } },
         { selector: ".faded", style: { opacity: 0.1 } },
       ],
-      layout: layoutOptions("rings"),
+      layout: { ...layoutOptions("rings"), animate: false } as LayoutOptions,
     });
+    capZoom(cy);
     cy.on("mouseover", "node", (ev) => {
       const nb = ev.target.closedNeighborhood();
       cy.elements().not(nb).addClass("faded");
@@ -207,7 +218,17 @@ export function GraphView({ data, height = 560 }: { data: GraphData; height?: nu
 
   const relayout = (kind: Layout) => {
     setLayout(kind);
-    cyRef.current?.layout(layoutOptions(kind)).run();
+    const cy = cyRef.current;
+    if (!cy) return;
+    const lay = cy.layout(layoutOptions(kind));
+    lay.one("layoutstop", () => capZoom(cy));
+    lay.run();
+  };
+  const fitAll = () => {
+    const cy = cyRef.current;
+    if (!cy) return;
+    cy.fit(undefined, 40);
+    capZoom(cy);
   };
   const reset = () => {
     [...expansions.current.keys()].forEach(collapse);
@@ -240,7 +261,7 @@ export function GraphView({ data, height = 560 }: { data: GraphData; height?: nu
             </button>
           ))}
         </div>
-        <button className="btn-ghost !py-1.5 text-xs" onClick={() => cyRef.current?.fit(undefined, 40)}>Centralizar</button>
+        <button className="btn-ghost !py-1.5 text-xs" onClick={fitAll}>Centralizar</button>
         <button className="btn-ghost !py-1.5 text-xs" onClick={() => relayout(layout)}>Reorganizar</button>
         {expanded.size > 0 && <button className="btn-ghost !py-1.5 text-xs" onClick={reset}>Recolher tudo ({expanded.size})</button>}
         <button className="btn-ghost !py-1.5 text-xs" onClick={exportPng}>Exportar PNG</button>
@@ -257,7 +278,8 @@ export function GraphView({ data, height = 560 }: { data: GraphData; height?: nu
         )}
       </div>
       {note && <div className="text-xs text-status-warn mb-2">{note}</div>}
-      <div ref={ref} className="w-full rounded-lg border border-border bg-bg/40" style={{ height }} />
+      <div ref={ref} className="w-full rounded-lg border border-border bg-bg/40"
+        style={{ height: `max(${height}px, calc(100vh - 380px))` }} />
       <div className="flex flex-wrap gap-3 text-[11px] text-text-dim mt-2">
         {[["usuário", COLORS.user], ["service principal", COLORS.sp], ["persona", COLORS.persona], ["IdP", COLORS.idp_persona],
           ["clearance", COLORS.clearance], ["legado", COLORS.legacy], ["objeto", COLORS.securable], ["objeto sensível", "#F2A900"]]
